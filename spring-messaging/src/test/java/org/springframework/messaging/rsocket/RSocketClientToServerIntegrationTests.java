@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2019 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,10 @@ package org.springframework.messaging.rsocket;
 
 import java.time.Duration;
 
-import io.rsocket.RSocketFactory;
 import io.rsocket.SocketAcceptor;
+import io.rsocket.core.RSocketServer;
 import io.rsocket.frame.decoder.PayloadDecoder;
+import io.rsocket.metadata.WellKnownMimeType;
 import io.rsocket.transport.netty.server.CloseableChannel;
 import io.rsocket.transport.netty.server.TcpServerTransport;
 import org.junit.jupiter.api.AfterAll;
@@ -38,6 +39,8 @@ import org.springframework.messaging.handler.annotation.MessageExceptionHandler;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.rsocket.annotation.support.RSocketMessageHandler;
 import org.springframework.stereotype.Controller;
+import org.springframework.util.MimeType;
+import org.springframework.util.MimeTypeUtils;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -61,19 +64,21 @@ public class RSocketClientToServerIntegrationTests {
 	@SuppressWarnings("ConstantConditions")
 	public static void setupOnce() {
 
+		MimeType metadataMimeType = MimeTypeUtils.parseMimeType(
+				WellKnownMimeType.MESSAGE_RSOCKET_ROUTING.getString());
+
 		context = new AnnotationConfigApplicationContext(ServerConfig.class);
 		RSocketMessageHandler messageHandler = context.getBean(RSocketMessageHandler.class);
 		SocketAcceptor responder = messageHandler.responder();
 
-		server = RSocketFactory.receive()
-				.addResponderPlugin(interceptor)
-				.frameDecoder(PayloadDecoder.ZERO_COPY)
-				.acceptor(responder)
-				.transport(TcpServerTransport.create("localhost", 7000))
-				.start()
+		server = RSocketServer.create(responder)
+				.interceptors(registry -> registry.forResponder(interceptor))
+				.payloadDecoder(PayloadDecoder.ZERO_COPY)
+				.bind(TcpServerTransport.create("localhost", 7000))
 				.block();
 
 		requester = RSocketRequester.builder()
+				.metadataMimeType(metadataMimeType)
 				.rsocketStrategies(context.getBean(RSocketStrategies.class))
 				.connectTcp("localhost", 7000)
 				.block();
@@ -152,13 +157,13 @@ public class RSocketClientToServerIntegrationTests {
 
 	@Test
 	public void voidReturnValue() {
-		Flux<String> result = requester.route("void-return-value").data("Hello").retrieveFlux(String.class);
+		Mono<String> result = requester.route("void-return-value").data("Hello").retrieveMono(String.class);
 		StepVerifier.create(result).expectComplete().verify(Duration.ofSeconds(5));
 	}
 
 	@Test
 	public void voidReturnValueFromExceptionHandler() {
-		Flux<String> result = requester.route("void-return-value").data("bad").retrieveFlux(String.class);
+		Mono<String> result = requester.route("void-return-value").data("bad").retrieveMono(String.class);
 		StepVerifier.create(result).expectComplete().verify(Duration.ofSeconds(5));
 	}
 
